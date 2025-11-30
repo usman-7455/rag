@@ -1,19 +1,19 @@
 import streamlit as st
 import json
-import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-
 
 # ---------------------------------------------------
 # 1. Load models & data (cached)
 # ---------------------------------------------------
 @st.cache_resource
 def load_all():
+    # Import faiss here to avoid Streamlit Cloud import errors
+    import faiss
 
-    # Load your uploaded embedding model from HF
+    # Load your uploaded embedding model from Hugging Face
     embedder = SentenceTransformer("zentom/embedding_model")
 
     # Load FAISS index
@@ -28,15 +28,13 @@ def load_all():
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     generator = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        torch_dtype=torch.float32,  # CPU-friendly
         device_map="auto"
     )
 
     return embedder, index, docs, tokenizer, generator
 
-
 embedder, index, documents, tokenizer, generator = load_all()
-
 
 # ---------------------------------------------------
 # 2. Retrieval function
@@ -45,7 +43,6 @@ def retrieve(query, k=5):
     q_emb = embedder.encode([query], normalize_embeddings=True)
     scores, idxs = index.search(np.array(q_emb).astype("float32"), k)
     return [documents[i] for i in idxs[0]]
-
 
 # ---------------------------------------------------
 # 3. Local generator
@@ -74,11 +71,10 @@ Answer (short, clinical, factual):
 
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-
 # ---------------------------------------------------
 # 4. UI
 # ---------------------------------------------------
-st.title(" Local Clinical RAG System ")
+st.title("Local Clinical RAG System")
 
 query = st.text_input("Ask something:")
 
