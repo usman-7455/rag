@@ -2,39 +2,32 @@ import streamlit as st
 import json
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch
+import faiss
+from groq import Groq
 
 # ---------------------------------------------------
-# 1. Load models & data (cached)
+# 🔑 GROQ API KEY — VISIBLE (for testing ONLY!)
+# ---------------------------------------------------
+GROQ_API_KEY = "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"  # ← REPLACE THIS WITH YOUR ACTUAL KEY
+
+if not GROQ_API_KEY or "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" in GROQ_API_KEY:
+    st.error("❌ Please replace 'YOUR_GROQ_API_KEY_HERE' with your real Groq API key.")
+    st.stop()
+
+groq_client = Groq(api_key=GROQ_API_KEY)
+
+# ---------------------------------------------------
+# 1. Load FAISS index, documents, and embedder (cached)
 # ---------------------------------------------------
 @st.cache_resource
-def load_all():
-    # Import faiss here to avoid Streamlit Cloud import errors
-    import faiss
-
-    # Load your uploaded embedding model from Hugging Face
+def load_retrieval_assets():
     embedder = SentenceTransformer("zentom/embedding_model")
-
-    # Load FAISS index
     index = faiss.read_index("index.faiss")
-
-    # Load documents (JSONL: newline-delimited JSON)
     with open("preprocessed_documents.jsonl", "r", encoding="utf-8") as f:
         docs = [json.loads(line) for line in f if line.strip()]
+    return embedder, index, docs
 
-    # Load local generator model (Phi-3 or any model you want)
-    model_name = "microsoft/Phi-3-mini-4k-instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    generator = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float32,  # CPU-friendly
-        device_map="auto"
-    )
-
-    return embedder, index, docs, tokenizer, generator
-
-embedder, index, documents, tokenizer, generator = load_all()
+embedder, index, documents = load_retrieval_assets()
 
 # ---------------------------------------------------
 # 2. Retrieval function
@@ -45,53 +38,56 @@ def retrieve(query, k=5):
     return [documents[i] for i in idxs[0]]
 
 # ---------------------------------------------------
-# 3. Local generator
+# 3. Generate answer using Groq
 # ---------------------------------------------------
 def generate_answer(question, retrieved_docs):
     context = "\n\n".join([doc["text"] for doc in retrieved_docs])
 
-    prompt = f"""
-You are a clinical question answering AI. Use ONLY the context.
+    prompt = f"""You are a clinical assistant. Follow these rules strictly:
+1. Answer ONLY using facts explicitly stated in the "Context" below.
+2. NEVER mention lab tests (e.g., ESR, CRP, AFB smear, culture), imaging findings, or symptoms unless they appear verbatim in the Context.
+3. NEVER use phrases like "typical findings", "may include", or "commonly seen".
+4. If the Context does not contain sufficient information, respond EXACTLY: "The provided clinical notes do not contain sufficient information."
 
---- CONTEXT ---
+Context:
 {context}
-----------------
 
 Question: {question}
-Answer (short, clinical, factual):
-"""
 
-    inputs = tokenizer(prompt, return_tensors="pt").to(generator.device)
+Answer:"""
 
-    outputs = generator.generate(
-        **inputs,
-        max_new_tokens=200,
-        temperature=0.2
+    chat_completion = groq_client.chat.completions.create(
+        messages=[{"role": "user", "content": prompt}],
+        model="llama-3.1-8b-instant",
+        temperature=0.2,
+        max_tokens=200,
+        top_p=0.9
     )
-
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return chat_completion.choices[0].message.content.strip()
 
 # ---------------------------------------------------
 # 4. UI
 # ---------------------------------------------------
-st.title("Local Clinical RAG System")
+st.title("🩺 Clinical RAG System (Groq + Llama-3)")
+st.caption("Using Llama-3.1-8B via Groq API")
 
-query = st.text_input("Ask something:")
+query = st.text_input("Ask a clinical question:")
 
 if st.button("Run"):
     if not query.strip():
-        st.warning("Enter a question first.")
+        st.warning("Please enter a question.")
     else:
-        with st.spinner("Retrieving..."):
+        with st.spinner("🔍 Retrieving..."):
             chunks = retrieve(query)
 
         st.subheader("Retrieved Evidence")
         for i, c in enumerate(chunks):
-            st.markdown(f"**Chunk {i+1}:**\n{c['text']}")
+            st.markdown(f"**Diagnosis:** `{c['diagnosis_category']}`")
+            st.text_area(f"Note {i+1}", c["text"], height=120, key=f"note_{i}")
             st.markdown("---")
 
-        with st.spinner("Generating answer..."):
+        with st.spinner("🧠 Generating answer..."):
             answer = generate_answer(query, chunks)
 
         st.subheader("Answer")
-        st.write(answer)
+        st.success(answer)
