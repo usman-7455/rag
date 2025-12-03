@@ -10,9 +10,7 @@ from groq import Groq
 # ---------------------------------------------------
 GROQ_API_KEY = "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"  # ← REPLACE THIS WITH YOUR ACTUAL KEY
 
-if not GROQ_API_KEY or "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" in GROQ_API_KEY:
-    st.error("❌ Please replace 'YOUR_GROQ_API_KEY_HERE' with your real Groq API key.")
-    st.stop()
+
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
